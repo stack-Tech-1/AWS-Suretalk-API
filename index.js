@@ -1,7 +1,7 @@
+const AWS = require('aws-sdk');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { db, FieldValue, storage } = require('./firebase');
 const bcrypt = require('bcryptjs'); 
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
@@ -12,7 +12,6 @@ const winston = require('winston');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
-const twilio = require('twilio');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -22,8 +21,52 @@ const bodyParser = require('body-parser');
 const Twilio = require('twilio'); 
 
 
+
 // ==================== Initialize Express ====================
 const app = express();
+
+
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY,
+  secretAccessKey: process.env.AWS_SECRET_KEY,
+  region: process.env.AWS_REGION
+});
+
+const uploadToS3 = async (filePath, s3Key) => {
+  const fileContent = fs.readFileSync(filePath);
+  const params = {
+    Bucket: process.env.S3_BUCKET_NAME,
+    Key: s3Key,
+    Body: fileContent,
+    ContentType: 'audio/mpeg',
+    ACL: 'public-read'
+  };
+
+  const result = await s3.upload(params).promise();
+  return result.Location;
+};
+
+const {
+  DynamoDBClient
+} = require('@aws-sdk/client-dynamodb');
+
+const {
+  DynamoDBDocumentClient,
+  PutCommand,
+  GetCommand,
+  QueryCommand,
+  UpdateCommand,
+  DeleteCommand
+} = require('@aws-sdk/lib-dynamodb');
+
+const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY,
+    secretAccessKey: process.env.AWS_SECRET_KEY
+  }
+}));
+
 
 
 // ==================== Logger Configuration ====================
@@ -76,7 +119,7 @@ app.post('/api/stripe-webhook',
       console.log('[Stripe Hook] Is Buffer:', Buffer.isBuffer(req.body));
       console.log('[Stripe Hook] Raw Body Type:', typeof req.body);
       event = stripe.webhooks.constructEvent(
-        req.body, // Raw body buffer
+        req.body, 
         sig,
         webhookSecret
       );
@@ -119,68 +162,49 @@ app.post('/api/stripe-webhook',
 
 async function handleSubscriptionChange(subscription) {
   try {
-    // 1. Find user reference (using metadata, email, or phone)
     const customer = await stripe.customers.retrieve(subscription.customer);
-    const userRef = await findUserRef(subscription, customer);
+    const user = await findUserRef(subscription, customer);
     
-    if (!userRef) {
+    if (!user) {
       logger.warn('No matching user found for subscription', {
         subscriptionId: subscription.id,
         customerId: subscription.customer
       });
-      return; // Skip processing but don't throw error
+      return;
     }
 
-    // 2. Prepare update data
     const subscriptionData = {
       stripeSubscriptionId: subscription.id,
       subscriptionStatus: subscription.status,
       plan: subscription.items?.data[0]?.plan?.nickname || 'Unknown Plan',
       currentPeriodEnd: subscription.current_period_end 
-        ? new Date(subscription.current_period_end * 1000)
+        ? new Date(subscription.current_period_end * 1000).toISOString()
         : null,
-      updatedAt: FieldValue.serverTimestamp()
+      updatedAt: new Date().toISOString(),
+      verified: ['active', 'trialing'].includes(subscription.status)
     };
 
-    
-      
-    // 3. Auto-update verification status based on subscription state
-    if (['active', 'trialing'].includes(subscription.status)) {
-      subscriptionData.verified = true;
-    } else if (['canceled', 'unpaid', 'past_due'].includes(subscription.status)) {
-      subscriptionData.verified = false;
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId: user.userId },
+      UpdateExpression: 'SET ' + Object.keys(subscriptionData)
+        .map(k => `${k} = :${k}`)
+        .join(', '),
+      ExpressionAttributeValues: Object.fromEntries(
+        Object.entries(subscriptionData).map(([k, v]) => [`:${k}`, v])
+    )}));
 
-      // Get user data to send discontinuation email
-      const userDoc = await userRef.get();
-      if (userDoc.exists && userDoc.data().email) {
-        await sendDiscontinuationEmail(
-          userDoc.data().email,
-          userDoc.data().firstName || 'Customer'
-        );
-    }     
-  }
+    if (['canceled', 'unpaid', 'past_due'].includes(subscription.status)) {
+      await sendDiscontinuationEmail(user.email, user.firstName || 'Customer');
+    }
 
-    // 4. Update Firestore
-    await userRef.update(subscriptionData);
-    
-    logger.info('Subscription data updated', {
-      userId: userRef.id,
-      status: subscription.status,
-      changes: Object.keys(subscriptionData)
-    });
-
-    // 5. Send notifications if subscription ended
     if (subscription.status === 'canceled') {
-      await sendSubscriptionEndNotification(userRef.id);
+      await sendSubscriptionEndNotification(user.userId);
     }
 
   } catch (error) {
-    logger.error('Failed to process subscription change', {
-      subscriptionId: subscription.id,
-      error: error.message,
-      stack: error.stack
-    });
-    throw error; // Will trigger Stripe retry
+    logger.error('Failed to process subscription change', error);
+    throw error;
   }
 }
 
@@ -190,21 +214,21 @@ async function sendSubscriptionEndNotification(userId) {
   if (process.env.SEND_SUBSCRIPTION_EMAILS !== 'true') return;
   
   try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    const user = userDoc.data();
+    const { Item: user } = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId }
+    }));
     
     if (user?.email) {
       await transporter.sendMail({
         from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
         to: user.email,
         subject: 'Your Subscription Has Ended',
-        html: `
-          <h2>Subscription Update</h2>
+        html: `<h2>Subscription Update</h2>
           <p>Your SureTalk subscription has ended.</p>
           <a href="${process.env.FRONTEND_URL}/resubscribe" style="...">
             Renew Your Subscription
-          </a>
-        `
+          </a>`
       });
     }
   } catch (error) {
@@ -215,16 +239,10 @@ async function sendSubscriptionEndNotification(userId) {
 
 
 async function handlePaymentSuccess(invoice) {
-  // 1. Get Stripe customer
   const customer = await stripe.customers.retrieve(invoice.customer);
+  const user = await findUserRef(invoice, customer);
   
-  // 2. Find user by (in order):
-  //    - invoice.metadata.userId (existing)
-  //    - customer email
-  //    - customer phone
-  const userRef = await findUserRef(invoice, customer);
-  
-  if (!userRef) {
+  if (!user) {
     logger.warn('No matching user found for payment', {
       invoiceId: invoice.id,
       customer: customer.id
@@ -232,28 +250,36 @@ async function handlePaymentSuccess(invoice) {
     return;
   }
 
-  // 3. Update Firestore
-  await userRef.update({
-    verified: true,
-    lastPaymentDate: FieldValue.serverTimestamp(),
-    subscriptionStatus: 'active',
-    stripeCustomerId: customer.id
-  });
+  await dynamo.send(new UpdateCommand({
+    TableName: 'Users',
+    Key: { userId: user.userId },
+    UpdateExpression: 'SET verified = :v, lastPaymentDate = :lpd, subscriptionStatus = :ss, stripeCustomerId = :scid',
+    ExpressionAttributeValues: {
+      ':v': true,
+      ':lpd': new Date().toISOString(),
+      ':ss': 'active',
+      ':scid': customer.id
+    }
+  }));
   
-  logger.info(`User verified via payment: ${userRef.id}`);
+  logger.info(`User verified via payment: ${user.userId}`);
 }
 
 
 async function handlePaymentFailure(invoice) {
   const customer = await stripe.customers.retrieve(invoice.customer);
-  const userRef = await findUserRef(invoice, customer);
+  const user = await findUserRef(invoice, customer);
   
-  if (userRef) {
-    await userRef.update({
-      lastPaymentFailed: true,
-      paymentFailureDate: FieldValue.serverTimestamp()
-      // Don't set verified:false yet (give grace period)
-    });
+  if (user) {
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId: user.userId },
+      UpdateExpression: 'SET lastPaymentFailed = :lpf, paymentFailureDate = :pfd',
+      ExpressionAttributeValues: {
+        ':lpf': true,
+        ':pfd': new Date().toISOString()
+      }
+    }));
   }
 }
 
@@ -262,19 +288,26 @@ async function handlePaymentFailure(invoice) {
 async function findUserRef(stripeObject, customer) {
   // 1. Try metadata first
   if (stripeObject.metadata?.userId) {
-    const doc = db.collection('users').doc(stripeObject.metadata.userId);
-    const exists = (await doc.get()).exists;
-    if (exists) return doc;
+    const { Item: user } = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId: stripeObject.metadata.userId }
+    }));
+    if (user) return user;
   }
   
   // 2. Try email lookup
   if (customer.email) {
-    const emailQuery = await db.collection('users')
-      .where('email', '==', customer.email)
-      .limit(1)
-      .get();
-      
-    if (!emailQuery.empty) return emailQuery.docs[0].ref;
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: { ':email': customer.email },
+      Limit: 1
+    }));
+    
+    if (result.Items && result.Items.length > 0) {
+      return result.Items[0];
+    }
   }
   
   // 3. Try phone lookup
@@ -371,15 +404,18 @@ const sendVerificationEmail = async (email, userId) => {
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + 24);
 
-  await db.collection('verification-tokens').doc(token).set({
-    email,
-    userId,
-    expiresAt,
-    used: false,
-    type: 'email-verification',
-    createdAt: FieldValue.serverTimestamp()
-  });
-
+  await dynamo.send(new PutCommand({
+    TableName: 'VerificationTokens',
+    Item: {
+      token,
+      email,
+      userId,
+      expiresAt: expiresAt.toISOString(),
+      used: false,
+      type: 'email-verification',
+      createdAt: new Date().toISOString()
+    }
+  }));
   
   const verificationLink = `${process.env.FRONTEND_URL}/confirm-email-link?token=${token}`;
   const subscriptionLink = "https://buy.stripe.com/bIY1806DG7qw6uk144"; // Stripe link
@@ -412,10 +448,19 @@ app.get('/api/check-email', async (req, res) => {
   const email = req.query.email?.toLowerCase().trim();
   if (!email) return res.status(400).json({ error: 'Email is required' });
 
-  const snapshot = await db.collection('users')
-    .where('email', '==', email)
-    .limit(1)
-    .get();
+  const result = await dynamo.send(new QueryCommand({
+    TableName: 'Users',
+    IndexName: 'email-index', 
+    KeyConditionExpression: 'email = :email',
+    ExpressionAttributeValues: {
+      ':email': email
+    }
+  }));
+  
+  if (result.Items.length > 0) {
+    return res.status(409).json({ error: 'Email already in use' });
+  }
+  
 
   if (!snapshot.empty) {
     return res.status(409).json({ error: 'Email already in use' });
@@ -429,10 +474,19 @@ app.get('/api/check-userid', async (req, res) => {
   const userId = req.query.userId?.trim();
   if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
-  const snapshot = await db.collection('users')
-    .where('userId', '==', userId)
-    .limit(1)
-    .get();
+  const result = await dynamo.send(new QueryCommand({
+    TableName: 'Users',
+    IndexName: 'email-index', 
+    KeyConditionExpression: 'email = :email',
+    ExpressionAttributeValues: {
+      ':email': email
+    }
+  }));
+  
+  if (result.Items.length > 0) {
+    return res.status(409).json({ error: 'Email already in use' });
+  }
+  
 
   if (!snapshot.empty) {
     return res.status(409).json({ error: 'User ID already taken' });
@@ -485,24 +539,24 @@ app.post('/api/signup', limiter, async (req, res) => {
 
 
     // Check for existing user
-    const usersRef = db.collection('users');
-   
-    // Create user
-    await usersRef.doc(userId).set({
-      userId,
-      firstName: sanitizeHtml(firstName),
-      email: normalizedEmail,
-      phone: sanitizeHtml(phone),
-      userPin: await bcrypt.hash(userPin, parseInt(process.env.BCRYPT_SALT_ROUNDS || 12)),
-      ...rest,
-      isInterestedInPartnership: Boolean(rest.joinProgram),
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      status: 'pending',
-      verified: false,
-      emailVerified: false,
-      smsConsent: true 
-    });
+    await dynamo.send(new PutCommand({
+      TableName: 'Users',
+      Item: {
+        userId,
+        firstName: sanitizeHtml(firstName),
+        email: normalizedEmail,
+        phone: sanitizeHtml(phone),
+        userPin: await bcrypt.hash(userPin, parseInt(process.env.BCRYPT_SALT_ROUNDS || 12)),
+        isInterestedInPartnership: Boolean(rest.joinProgram),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'pending',
+        verified: false,
+        emailVerified: false,
+        smsConsent: true
+      }
+    }));
+    
 
     // Send verification email
     await sendVerificationEmail(normalizedEmail, userId);
@@ -559,28 +613,42 @@ app.get('/api/resend-verification', async (req, res) => {
 
   try {
     // Check if the user exists
-    const userDoc = await db.collection('users').where('email', '==', email).limit(1).get();
-    if (userDoc.empty) {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: {
+        ':email': email
+      }
+    }));
+    
+    if (!result.Items.length) {
       return res.status(404).json({ error: 'User not found' });
     }
-
+    
     // Assuming `userDoc` is a single document and we're accessing the first item
-    const user = userDoc.docs[0].data();
+    const user = result.Items[0];
     const userId = user.userId;
-
+    
+      
     // Generate a new token using the defined function
     const token = generateVerificationToken(userId, email);
 
     //expiration date set to 24 hours from now
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     
-    // Store the token in the Firestore collection
-    await db.collection('verification-tokens').doc(token).set({
-      userId,
-      email,
-      used: false,
-      expiresAt: FieldValue.serverTimestamp(),  
-    });
+    // Store the token in DynamoDB
+await dynamo.send(new PutCommand({
+  TableName: 'VerificationTokens',
+  Item: {
+    token,
+    userId,
+    email,
+    used: false,
+    expiresAt: expiresAt.toISOString(),
+    createdAt: new Date().toISOString()
+  }
+}));
 
     // Send the verification email again
     await sendVerificationEmail(email, userId, token);
@@ -623,14 +691,18 @@ app.get('/api/verify-email', async (req, res) => {
 
   try {
     // 1. Validate token exists
-    const tokenDoc = await db.collection('verification-tokens').doc(token).get();
-    if (!tokenDoc.exists) {
-      logger.error('Token not found in Firestore', { token });
+    const { Item: tokenData } = await dynamo.send(new GetCommand({
+      TableName: 'VerificationTokens',
+      Key: { token }
+    }));
+    
+    if (!tokenData) {
+      logger.error('Token not found in DynamoDB', { token });
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=invalid_token`);
     }
+    
 
     // 2. Extract token data
-    const tokenData = tokenDoc.data();
     const userId = tokenData.userId;
     const email = tokenData.email;
 
@@ -656,12 +728,25 @@ app.get('/api/verify-email', async (req, res) => {
     }
 
     // 4. Update records
-    await db.collection('verification-tokens').doc(token).update({ used: true });
-    await db.collection('users').doc(userId).update({
-      emailVerified: true,
-      status: 'active',
-      updatedAt: FieldValue.serverTimestamp()
-    });
+    await dynamo.send(new UpdateCommand({
+      TableName: 'VerificationTokens',
+      Key: { token },
+      UpdateExpression: 'set used = :used',
+      ExpressionAttributeValues: {
+        ':used': true
+      }
+    }));
+    
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId },
+      UpdateExpression: 'set emailVerified = :ev, status = :status, updatedAt = :updatedAt',
+      ExpressionAttributeValues: {
+        ':ev': true,
+        ':status': 'active',
+        ':updatedAt': new Date().toISOString()
+      }
+    }));
 
     logger.info('Email verification successful', { userId, email });
 
@@ -699,67 +784,26 @@ app.get('/api/verify-email', async (req, res) => {
 });
 
 
-
-
-// ==================== Google Auth Endpoint ====================
-app.post('/api/google-auth', async (req, res) => {
-  try {
-    const { credential } = req.body;
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-    const ticket = await client.verifyIdToken({
-      idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID
-    });
-    
-    const payload = ticket.getPayload();
-    const email = payload.email;
-    const userId = generateUserId();
-    
-    // Check if user exists by email
-    const usersRef = db.collection('users');
-    const querySnapshot = await usersRef.where('email', '==', email).limit(1).get();
-    
-    if (querySnapshot.empty) {
-      // Create new user with userId as document ID
-      await usersRef.doc(userId).set({
-        userId,
-        email,
-        firstName: payload.given_name || '',
-        lastName: payload.family_name || '',
-        emailVerified: true,
-        status: 'active',
-        createdAt: FieldValue.serverTimestamp()
-      });
-    }
-    
-    // Generate JWT token with userId
-    const token = generateAuthToken(querySnapshot.empty ? userId : querySnapshot.docs[0].id);
-    
-    res.json({ token });
-  } catch (error) {
-    logger.error('Google auth failed', { error });
-    res.status(401).json({ error: 'Authentication failed' });
-  }
-});
-
+// ==================== Login Route ====================
 // Login Endpoint
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // Find user by email
-    const querySnapshot = await db.collection('users')
-      .where('email', '==', email)
-      .limit(1)
-      .get();
+    // Find user by email - NEEDS MIGRATION
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: { ':email': email },
+      Limit: 1
+    }));
 
-    if (querySnapshot.empty) {
+    if (!result.Items || result.Items.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    const userDoc = querySnapshot.docs[0];
-    const user = userDoc.data();
+    const user = result.Items[0];
     
     if (!user.emailVerified) {
       return res.status(403).json({ error: 'Email not verified' });
@@ -802,10 +846,13 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
     const normalizedEmail = sanitizeHtml(email).toLowerCase().trim();
 
     // Check if user exists
-    const querySnapshot = await db.collection('users')
-      .where('email', '==', normalizedEmail)
-      .limit(1)
-      .get();
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: { ':email': email },
+      Limit: 1
+    }));
 
     if (querySnapshot.empty) {
       return res.status(404).json({ 
@@ -1000,16 +1047,10 @@ app.post('/api/fetch-recording', limiter, async (req, res, next) => {
               logger.info(`Recording saved temporarily`, { tempFilePath });
 
               try {
-                  // Upload to Firebase Storage
-                  const destination = `recordings/${recordingSid}.mp3`;
-                  await storage.upload(tempFilePath, {
-                      destination: destination,
-                      metadata: { contentType: "audio/mpeg" }
-                  });
-
-                  // Get Public URL
-                  const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${storage.name}/o/${encodeURIComponent(destination)}?alt=media`;
-                  logger.info("Recording uploaded to Firebase", { publicUrl });
+                const destination = `recordings/${recordingSid}.mp3`;
+                const publicUrl = await uploadToS3(tempFilePath, destination);
+                logger.info("Recording uploaded to S3", { publicUrl });
+                                 
 
                   // Delete temp file
                   try {
