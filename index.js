@@ -704,7 +704,6 @@ app.get('/api/verify-email', async (req, res) => {
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=invalid_token`);
     }
     
-
     // 2. Extract token data
     const userId = tokenData.userId;
     const email = tokenData.email;
@@ -723,14 +722,18 @@ app.get('/api/verify-email', async (req, res) => {
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=expired_token`);
     }
 
-    // 3. Verify user exists
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
+    // 3. Verify user exists in DynamoDB
+    const { Item: user } = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId }
+    }));
+    
+    if (!user) {
       logger.error('User not found during verification', { userId });
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=user_not_found`);
     }
 
-    // 4. Update records
+    // 4. Update records in DynamoDB
     await dynamo.send(new UpdateCommand({
       TableName: 'VerificationTokens',
       Key: { token },
@@ -754,7 +757,6 @@ app.get('/api/verify-email', async (req, res) => {
     logger.info('Email verification successful', { userId, email });
 
     // 5. Send welcome email
-    const user = userDoc.data();
     await sendWelcomeEmail(user.email, user.firstName);
 
     // 6. Respond with success page
@@ -765,9 +767,28 @@ app.get('/api/verify-email', async (req, res) => {
       <head>
         <title>Email Verified</title>
         <style>
-          body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-          .container { max-width: 500px; margin: 0 auto; }
-          h1 { color: #28a745; }
+          body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            padding: 50px;
+            background-color: #f5f5f5;
+          }
+          .container { 
+            max-width: 500px; 
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          }
+          h1 { 
+            color: #28a745; 
+            margin-bottom: 20px;
+          }
+          p {
+            margin-bottom: 15px;
+            line-height: 1.5;
+          }
         </style>
       </head>
       <body>
@@ -783,7 +804,8 @@ app.get('/api/verify-email', async (req, res) => {
   } catch (error) {
     logger.error('Verification failed', {
       message: error.message,
-      stack: error.stack
+      stack: error.stack,
+      token: token
     });    
     return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification`);
   }
