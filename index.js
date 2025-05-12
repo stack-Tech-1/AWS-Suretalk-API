@@ -781,7 +781,10 @@ app.get('/api/verify-email', async (req, res) => {
     `);
 
   } catch (error) {
-    logger.error('Verification failed', { error });
+    logger.error('Verification failed', {
+      message: error.message,
+      stack: error.stack
+    });    
     return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification`);
   }
 });
