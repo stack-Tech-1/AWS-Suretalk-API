@@ -1066,11 +1066,11 @@ app.post('/api/fetch-recording', limiter, async (req, res, next) => {
           }
       });
 
-      const tempFilePath = path.join(__dirname, 'temp', `${recordingSid}.mp3`);
+      const tempFilePath = path.join(__dirname, 'suretalk-voicenotes-prod', `${recordingSid}.mp3`);
       
-      // Ensure temp directory exists
-      if (!fs.existsSync(path.join(__dirname, 'temp'))) {
-          fs.mkdirSync(path.join(__dirname, 'temp'));
+      // Ensure directory exists
+      if (!fs.existsSync(path.join(__dirname, 'suretalk-voicenotes-prod'))) {
+          fs.mkdirSync(path.join(__dirname, 'suretalk-voicenotes-prod'));
       }
 
       const writer = fs.createWriteStream(tempFilePath);
@@ -1082,10 +1082,9 @@ app.post('/api/fetch-recording', limiter, async (req, res, next) => {
 
               try {
                 const destination = `recordings/${recordingSid}.mp3`;
-                const publicUrl = await uploadToS3(tempFilePath, destination);
-                logger.info("Recording uploaded to S3", { publicUrl });
+                const s3Url = await uploadToS3(tempFilePath, destination);
+                logger.info("Recording uploaded to S3", { s3Url });
                                  
-
                   // Delete temp file
                   try {
                     fs.unlinkSync(tempFilePath);
@@ -1093,16 +1092,16 @@ app.post('/api/fetch-recording', limiter, async (req, res, next) => {
                     logger.warn("Temp file already deleted or missing", { path: tempFilePath });
                   }                
 
-                  // Return Public URL
+                  // Return S3 URL
                   res.json({
                       success: true,
                       message: "Recording uploaded successfully",
                       recordingSid: recordingSid,
-                      firebaseUrl: publicUrl
+                      s3Url: s3Url
                   });
                   resolve();
               } catch (uploadError) {
-                  logger.error("Error uploading file to Firebase", { error: uploadError });
+                  logger.error("Error uploading file to S3", { error: uploadError });
                   reject(uploadError);
               }
           });
@@ -1114,8 +1113,15 @@ app.post('/api/fetch-recording', limiter, async (req, res, next) => {
       });
 
   } catch (error) {
-      logger.error("Error processing recording", { error: error.message, stack: error.stack });
-      next(error);
+      logger.error("Error processing recording", { 
+          error: error.message, 
+          stack: error.stack,
+          recordingSid: recordingSid 
+      });
+      res.status(500).json({ 
+          error: "Failed to process recording",
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
   }
 });
 
