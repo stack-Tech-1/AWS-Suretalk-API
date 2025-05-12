@@ -733,24 +733,30 @@ app.get('/api/verify-email', async (req, res) => {
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=user_not_found`);
     }
 
-    // 4. Update records in DynamoDB
-    await dynamo.send(new UpdateCommand({
+     // 4. Update records in DynamoDB
+     await dynamo.send(new UpdateCommand({
       TableName: 'VerificationTokens',
       Key: { token },
-      UpdateExpression: 'set used = :used',
+      UpdateExpression: 'set #used = :used',
       ExpressionAttributeValues: {
         ':used': true
+      },
+      ExpressionAttributeNames: {
+        '#used': 'used'
       }
     }));
     
     await dynamo.send(new UpdateCommand({
       TableName: 'Users',
       Key: { userId },
-      UpdateExpression: 'set emailVerified = :ev, status = :status, updatedAt = :updatedAt',
+      UpdateExpression: 'set emailVerified = :ev, #st = :status, updatedAt = :updatedAt',
       ExpressionAttributeValues: {
         ':ev': true,
         ':status': 'active',
         ':updatedAt': new Date().toISOString()
+      },
+      ExpressionAttributeNames: {
+        '#st': 'status'
       }
     }));
 
