@@ -330,8 +330,7 @@ async function findUserRef(stripeObject, customer) {
 // ==================== CORS Configuration ====================
 const allowedOrigins = [
   'http://51.20.70.31:10000',
-  'http://51.20.142.251:10000',
-  'https://suretalk-signup.onrender.com',  
+  'http://51.20.142.251:10000'    
 ];
 
 
@@ -1244,9 +1243,9 @@ app.use((err, req, res, next) => {
 
 
 // ==================== Server Startup ====================
-const PORT = process.env.PORT || 10000; 
+const PORT = 10000; 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Backend running on port ${PORT}`);
+  console.log(`Backend running on port ${PORT}`); 
 });
 
 
