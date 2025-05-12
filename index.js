@@ -328,10 +328,12 @@ async function findUserRef(stripeObject, customer) {
 
 
 // ==================== CORS Configuration ====================
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
+const allowedOrigins = [
+  'http://51.20.70.31:10000',
   'https://suretalk-signup.onrender.com',
   'http://localhost:3000'
 ];
+
 
 const corsOptions = {
   origin: function (origin, callback) {
@@ -1242,8 +1244,7 @@ app.use((err, req, res, next) => {
 
 
 // ==================== Server Startup ====================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server started on port ${PORT}`, {
     environment: process.env.NODE_ENV || 'development',
     allowedOrigins
@@ -1251,6 +1252,15 @@ app.listen(PORT, () => {
 });
 
 
+
+
 // Created by: stacktechnologies
 // Last Updated: 2025-04-10
 // Project: SureTalk backend server
+
+
+
+
+
+
+
