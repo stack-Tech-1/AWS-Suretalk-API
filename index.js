@@ -704,6 +704,7 @@ app.get('/api/verify-email', async (req, res) => {
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=invalid_token`);
     }
     
+
     // 2. Extract token data
     const userId = tokenData.userId;
     const email = tokenData.email;
@@ -716,23 +717,20 @@ app.get('/api/verify-email', async (req, res) => {
     }
 
     let expiresAt = tokenData.expiresAt;
+    if (expiresAt?.toDate) expiresAt = expiresAt.toDate();
     if (new Date() > new Date(expiresAt)) {
       logger.warn('Token expired', { token, expiresAt });
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=expired_token`);
     }
 
-    // 3. Verify user exists in DynamoDB
-    const { Item: user } = await dynamo.send(new GetCommand({
-      TableName: 'Users',
-      Key: { userId }
-    }));
-    
-    if (!user) {
+    // 3. Verify user exists
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
       logger.error('User not found during verification', { userId });
       return res.redirect(`${process.env.FRONTEND_URL}/failedEmailVerification?error=user_not_found`);
     }
 
-    // 4. Update records in DynamoDB
+    // 4. Update records
     await dynamo.send(new UpdateCommand({
       TableName: 'VerificationTokens',
       Key: { token },
@@ -756,6 +754,7 @@ app.get('/api/verify-email', async (req, res) => {
     logger.info('Email verification successful', { userId, email });
 
     // 5. Send welcome email
+    const user = userDoc.data();
     await sendWelcomeEmail(user.email, user.firstName);
 
     // 6. Respond with success page
