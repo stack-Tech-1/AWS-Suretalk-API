@@ -1244,12 +1244,15 @@ app.use((err, req, res, next) => {
 
 
 // ==================== Server Startup ====================
+const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server started on port ${PORT}`, {
     environment: process.env.NODE_ENV || 'development',
     allowedOrigins
   });
 });
+
 
 
 
