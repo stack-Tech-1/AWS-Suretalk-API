@@ -330,8 +330,8 @@ async function findUserRef(stripeObject, customer) {
 // ==================== CORS Configuration ====================
 const allowedOrigins = [
   'http://51.20.70.31:10000',
-  'https://suretalk-signup.onrender.com',
-  'http://localhost:3000'
+  'http://51.20.142.251:10000',
+  'https://suretalk-signup.onrender.com',  
 ];
 
 
