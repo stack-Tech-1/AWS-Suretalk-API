@@ -40,12 +40,25 @@ const uploadToS3 = async (filePath, s3Key) => {
     Bucket: process.env.S3_BUCKET_NAME,
     Key: s3Key,
     Body: fileContent,
-    ContentType: 'audio/mpeg',
-    ACL: 'public-read'
+    ContentType: 'audio/mpeg'
+    
   };
-
-  const result = await s3.upload(params).promise();
-  return result.Location;
+  
+  try {
+    const result = await s3.upload(params).promise();
+    return result.Location;
+  } catch (error) {
+    logger.error('S3 Upload Failed', {
+      error: error.message,
+      stack: error.stack,
+      params: {
+        Bucket: params.Bucket,
+        Key: params.Key,
+        ContentType: params.ContentType
+      }
+    });
+    throw error;
+  }
 };
 
 const {
