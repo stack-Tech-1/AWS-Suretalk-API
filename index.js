@@ -341,12 +341,19 @@ async function findUserRef(stripeObject, customer) {
   
   // 3. Try phone lookup
   if (customer.phone) {
-    const phoneQuery = await db.collection('users')
-      .where('phone', '==', customer.phone.replace(/\D/g, ''))
-      .limit(1)
-      .get();
-      
-    if (!phoneQuery.empty) return phoneQuery.docs[0].ref;
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'phone-index',
+      KeyConditionExpression: 'phone = :phone',
+      ExpressionAttributeValues: {
+        ':phone': customer.phone.replace(/\D/g, '')
+      },
+      Limit: 1
+    }));
+    
+    if (result.Items?.length > 0) {
+      return result.Items[0];
+    }    
   }
   
   return null;
@@ -1188,16 +1195,26 @@ app.post('/api/subscribe-user', async (req, res) => {
       expand: ['latest_invoice.payment_intent']
     });
 
-    // 3. Update Firestore
-    const userRef = db.collection('users').doc(userId);
-    await userRef.update({
-      verified: true,
-      stripeCustomerId: customer.id,
-      subscriptionId: subscription.id,
-      subscriptionStatus: 'active',
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
+    // 3. Update dynamoDB with subscription details    
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId },
+      UpdateExpression: `
+        SET verified = :v,
+            stripeCustomerId = :scid,
+            subscriptionId = :subid,
+            subscriptionStatus = :status,
+            updatedAt = :updatedAt
+      `,
+      ExpressionAttributeValues: {
+        ':v': true,
+        ':scid': customer.id,
+        ':subid': subscription.id,
+        ':status': 'active',
+        ':updatedAt': new Date().toISOString()
+      }
+    }));
+    
     res.status(200).json({ success: true });
 
   } catch (err) {
@@ -1229,7 +1246,7 @@ app.post('/twilio-payment-handler', (req, res) => {
       paymentConnector: "Stripe_Connector_2",
       tokenType: "payment-method",
       postalCode: false,
-      action: "https://suretalk-api.onrender.com/start-payment-setup" 
+      action: "http://51.20.142.251:10000/start-payment-setup" 
     });
 
     res.type('text/xml');
@@ -1260,12 +1277,16 @@ app.post('/start-payment-setup', async (req, res) => {
 
     await stripe.subscriptions.create({
       customer: customer.id,
-      items: [{ price: 'price_1RFBXvAOy2W6vlFokwIELKQX' }],
+      items: [{ price: process.env.STRIPE_DEFAULT_PRICE_ID }],
       payment_settings: {
         payment_method_types: ['card'],
         save_default_payment_method: 'on_subscription'
       }
     });
+
+    if (!process.env.STRIPE_DEFAULT_PRICE_ID) {
+      throw new Error('STRIPE_DEFAULT_PRICE_ID is not defined in environment');
+    }    
 
     console.log('✅ Subscription created for:', customer.id);
 
