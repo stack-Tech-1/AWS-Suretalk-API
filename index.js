@@ -891,7 +891,7 @@ app.post('/api/login', async (req, res) => {
 
 // ==================== Account Recovery Endpoints ====================
 
-// Request recovery
+// Request recovery - Fixed Version
 app.post('/api/request-recovery', limiter, async (req, res) => {
   try {
     const { email } = req.body;
@@ -906,16 +906,16 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
 
     const normalizedEmail = sanitizeHtml(email).toLowerCase().trim();
 
-    // Check if user exists
+    // Check if user exists in DynamoDB
     const result = await dynamo.send(new QueryCommand({
       TableName: 'Users',
       IndexName: 'email-index',
       KeyConditionExpression: 'email = :email',
-      ExpressionAttributeValues: { ':email': email },
+      ExpressionAttributeValues: { ':email': normalizedEmail },
       Limit: 1
     }));
 
-    if (querySnapshot.empty) {
+    if (!result.Items || result.Items.length === 0) {
       return res.status(404).json({ 
         status: 'error',
         error: 'No account found with this email',
@@ -923,23 +923,24 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       });
     }
 
-    const userDoc = querySnapshot.docs[0];
-    const user = userDoc.data();
-
-    // Generate recovery token
+    const user = result.Items[0];
     const recoveryToken = generateToken();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 1);
 
-    // Save recovery token
-    await db.collection('recovery-tokens').doc(recoveryToken).set({
-      email: normalizedEmail,
-      userId: user.userId,
-      expiresAt,
-      used: false,
-      type: 'account-recovery',
-      createdAt: FieldValue.serverTimestamp()
-    });
+    // Save recovery token in DynamoDB
+    await dynamo.send(new PutCommand({
+      TableName: 'VerificationTokens',
+      Item: {
+        token: recoveryToken,
+        email: normalizedEmail,
+        userId: user.userId,
+        expiresAt: expiresAt.toISOString(),
+        used: false,
+        type: 'account-recovery',
+        createdAt: new Date().toISOString()
+      }
+    }));
 
     // Send recovery email
     const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
@@ -956,7 +957,6 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       `
     });
 
-    // Consistent success response
     res.status(200).json({ 
       status: 'success',
       message: 'Recovery email sent. Please check your inbox.',
@@ -980,7 +980,7 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
   }
 });
 
-// Complete recovery
+// Complete recovery - Fixed Version
 app.post('/api/complete-recovery', limiter, async (req, res) => {
   try {
     const { token } = req.body;
@@ -989,45 +989,59 @@ app.post('/api/complete-recovery', limiter, async (req, res) => {
       return res.status(400).json({ error: 'Recovery token is required' });
     }
 
-    // Get token document
-    const tokenDoc = await db.collection('recovery-tokens').doc(token).get();
-    if (!tokenDoc.exists) {
+    // Get token from DynamoDB
+    const { Item: tokenData } = await dynamo.send(new GetCommand({
+      TableName: 'VerificationTokens',
+      Key: { token }
+    }));
+
+    if (!tokenData) {
       return res.status(404).json({ error: 'Invalid or expired recovery link' });
     }
 
-    const tokenData = tokenDoc.data();
-    
     // Check token status
     if (tokenData.used) {
       return res.status(400).json({ error: 'This recovery link has already been used' });
     }
 
-    let expiresAt = tokenData.expiresAt;
-    if (expiresAt?.toDate) expiresAt = expiresAt.toDate();
-    if (new Date() > new Date(expiresAt)) {
+    if (new Date() > new Date(tokenData.expiresAt)) {
       return res.status(400).json({ error: 'This recovery link has expired' });
     }
 
     // Get user data
-    const userDoc = await db.collection('users').doc(tokenData.userId).get();
-    if (!userDoc.exists) {
+    const { Item: user } = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId: tokenData.userId }
+    }));
+
+    if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-
-    const user = userDoc.data();
 
     // Generate 4-digit temporary PIN
     const tempPin = Math.floor(1000 + Math.random() * 9000).toString();
     const tempPinExpiry = new Date();
-    tempPinExpiry.setHours(tempPinExpiry.getHours() + 1); // Expires in 1 hour
+    tempPinExpiry.setHours(tempPinExpiry.getHours() + 1);
 
-    // Mark token as used and update user with temp PIN
-    await db.collection('recovery-tokens').doc(token).update({ used: true });
-    await db.collection('users').doc(tokenData.userId).update({
-      tempPin: await bcrypt.hash(tempPin, 12),
-      tempPinExpiry,
-      requiresPinReset: true
-    });
+    // Update records in DynamoDB
+    await dynamo.send(new UpdateCommand({
+      TableName: 'VerificationTokens',
+      Key: { token },
+      UpdateExpression: 'set #used = :used',
+      ExpressionAttributeValues: { ':used': true },
+      ExpressionAttributeNames: { '#used': 'used' }
+    }));
+
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId: tokenData.userId },
+      UpdateExpression: 'set tempPin = :tp, tempPinExpiry = :tpe, requiresPinReset = :rpr',
+      ExpressionAttributeValues: {
+        ':tp': await bcrypt.hash(tempPin, 12),
+        ':tpe': tempPinExpiry.toISOString(),
+        ':rpr': true
+      }
+    }));
 
     // Send email with User ID + Temporary PIN
     await transporter.sendMail({
