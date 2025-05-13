@@ -478,25 +478,25 @@ app.get('/api/check-email', async (req, res) => {
   const email = req.query.email?.toLowerCase().trim();
   if (!email) return res.status(400).json({ error: 'Email is required' });
 
-  const result = await dynamo.send(new QueryCommand({
-    TableName: 'Users',
-    IndexName: 'email-index', 
-    KeyConditionExpression: 'email = :email',
-    ExpressionAttributeValues: {
-      ':email': email
+  try {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'email-index', // Assumes you created this
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: {
+        ':email': email
+      }
+    }));
+
+    if (result.Items.length > 0) {
+      return res.status(409).json({ error: 'Email already in use' });
     }
-  }));
-  
-  if (result.Items.length > 0) {
-    return res.status(409).json({ error: 'Email already in use' });
-  }
-  
 
-  if (!snapshot.empty) {
-    return res.status(409).json({ error: 'Email already in use' });
+    res.json({ available: true });
+  } catch (err) {
+    console.error('Email check failed', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({ available: true });
 });
 
 // Check userId availability
@@ -504,26 +504,23 @@ app.get('/api/check-userid', async (req, res) => {
   const userId = req.query.userId?.trim();
   if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
-  const result = await dynamo.send(new QueryCommand({
-    TableName: 'Users',
-    IndexName: 'email-index', 
-    KeyConditionExpression: 'email = :email',
-    ExpressionAttributeValues: {
-      ':email': email
+  try {
+    const result = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId } // Assumes userId is the primary key
+    }));
+
+    if (result.Item) {
+      return res.status(409).json({ error: 'User ID already taken' });
     }
-  }));
-  
-  if (result.Items.length > 0) {
-    return res.status(409).json({ error: 'Email already in use' });
-  }
-  
 
-  if (!snapshot.empty) {
-    return res.status(409).json({ error: 'User ID already taken' });
+    res.json({ available: true });
+  } catch (err) {
+    console.error('User ID check failed', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({ available: true });
 });
+
 
 
 
