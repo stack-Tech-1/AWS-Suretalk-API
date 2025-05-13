@@ -33,28 +33,42 @@ const s3 = new AWS.S3({
   secretAccessKey: process.env.AWS_SECRET_KEY,
   region: process.env.AWS_REGION
 });
-
 const uploadToS3 = async (filePath, s3Key) => {
   const fileContent = fs.readFileSync(filePath);
-  const params = {
+  const uploadParams = {
     Bucket: process.env.S3_BUCKET_NAME,
     Key: s3Key,
     Body: fileContent,
     ContentType: 'audio/mpeg'
-    
   };
-  
+
   try {
-    const result = await s3.upload(params).promise();
-    return result.Location;
+    // 1. Upload the file
+    await s3.upload(uploadParams).promise();
+    
+    // 2. Generate presigned URL (valid for 7 days)
+    const url = s3.getSignedUrl('getObject', {
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: s3Key,
+      Expires: 604800 // 7 days in seconds
+    });
+    
+    logger.info('File uploaded and presigned URL generated', {
+      bucket: process.env.S3_BUCKET_NAME,
+      key: s3Key,
+      url: url // Log truncated URL for security
+    });
+    
+    return url;
+    
   } catch (error) {
     logger.error('S3 Upload Failed', {
       error: error.message,
       stack: error.stack,
       params: {
-        Bucket: params.Bucket,
-        Key: params.Key,
-        ContentType: params.ContentType
+        Bucket: uploadParams.Bucket,
+        Key: uploadParams.Key,
+        ContentType: uploadParams.ContentType
       }
     });
     throw error;
