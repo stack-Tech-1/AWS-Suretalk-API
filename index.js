@@ -364,7 +364,9 @@ async function findUserRef(stripeObject, customer) {
 // ==================== CORS Configuration ====================
 const allowedOrigins = [
   'http://51.20.70.31:10000',
-  'http://51.20.142.251:10000'    
+  'http://51.20.142.251:10000',
+  'http://sign-in.suretalknow.com',
+  'http://api.suretalknow.com'    
 ];
 
 
@@ -455,8 +457,7 @@ const sendVerificationEmail = async (email, userId) => {
   }));
   
   const verificationLink = `${process.env.FRONTEND_URL}/confirm-email-link?token=${token}`;
-  const subscriptionLink = "https://buy.stripe.com/bIY1806DG7qw6uk144"; // Stripe link
-
+  const subscriptionLink = "https://buy.stripe.com/bIY1806DG7qw6uk144";   
   await transporter.sendMail({
     from: `"SureTalk" <${process.env.EMAIL_USER}>`,
     to: email,
