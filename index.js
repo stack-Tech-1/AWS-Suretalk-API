@@ -1247,7 +1247,7 @@ app.post('/twilio-payment-handler', (req, res) => {
       paymentConnector: "Stripe_Connector_2",
       tokenType: "payment-method",
       postalCode: false,
-      action: "http://51.20.142.251:10000/start-payment-setup" 
+      action: "https://51.20.142.251:10000/start-payment-setup" 
     });
 
     res.type('text/xml');
