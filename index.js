@@ -365,8 +365,8 @@ async function findUserRef(stripeObject, customer) {
 const allowedOrigins = [
   'http://51.20.70.31:10000',
   'http://51.20.142.251:10000',
-  'http://sign-in.suretalknow.com',
-  'http://api.suretalknow.com'    
+  'https://sign-in.suretalknow.com',
+  'https://api.suretalknow.com'    
 ];
 
 
