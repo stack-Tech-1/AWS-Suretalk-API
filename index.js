@@ -1244,7 +1244,7 @@ app.post('/twilio-payment-handler', (req, res) => {
     
     twiml.say("We are saving your card for future monthly payments.");
     twiml.pay({
-      paymentConnector: "Stripe_Connector_2",
+      paymentConnector: "Stripe_Connector_Main",
       tokenType: "payment-method",
       postalCode: false,
       action: "https://api.suretalknow.com/start-payment-setup" 
