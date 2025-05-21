@@ -457,7 +457,7 @@ const sendVerificationEmail = async (email, userId) => {
   }));
   
   const verificationLink = `${process.env.FRONTEND_URL}/confirm-email-link?token=${token}`;
-  const subscriptionLink = "https://buy.stripe.com/test_6oU14pfj6cd457Rett8so00";   
+  const subscriptionLink = "https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01";   
   await transporter.sendMail({
     from: `"SureTalk" <${process.env.EMAIL_USER}>`,
     to: email,
