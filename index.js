@@ -624,7 +624,7 @@ const sendDiscontinuationEmail = async (email, firstName) => {
         <h2>Hi ${firstName},</h2>
         <p>We noticed your SureTalk service has been discontinued.</p>
         <p>We'd love to have you back! Here's a special link to resubscribe:</p>
-        <a href="https://buy.stripe.com/bIY1806DG7qw6uk144">Resubscribe to SureTalk</a>
+        <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01">Resubscribe to SureTalk</a>
         <p>If this was a mistake, please contact our support team.</p>
       `
     });
@@ -709,7 +709,7 @@ const sendWelcomeEmail = async (email, firstName) => {
         <h2>Welcome to SureTalk, ${firstName}!</h2>
         <p>Thank you for joining our community.</p>
         <p>You can now complete your subscription to start using our services:</p>
-        <a href="https://buy.stripe.com/bIY1806DG7qw6uk144">Complete Subscription</a>
+        <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01">Complete Subscription</a>
         <p>If you have any questions, please reply to this email.</p>
       `
     });
