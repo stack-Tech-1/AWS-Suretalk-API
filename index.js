@@ -168,10 +168,17 @@ app.post('/api/stripe-webhook',
           await handlePaymentFailure(event.data.object);
           break;
           
-        case 'customer.subscription.deleted':
         case 'customer.subscription.updated':
           await handleSubscriptionChange(event.data.object);
           break;
+
+          case 'customer.subscription.created':
+            await handleSubscriptionCreated(event.data.object);
+            break;
+        
+          case 'customer.subscription.deleted':
+            await handleSubscriptionDeleted(event.data.object);
+            break;  
           
         default:
           logger.debug(`Unhandled event type: ${event.type}`);
@@ -188,6 +195,84 @@ app.post('/api/stripe-webhook',
       //console.log('[Stripe Hook] Raw body type:', typeof req.body);
 
 // ==================== Helper Functions ====================
+
+async function handleSubscriptionCreated(subscription) {
+  try {
+    const customer = await stripe.customers.retrieve(subscription.customer);
+    const user = await findUserRef(subscription, customer);
+
+    if (!user) {
+      logger.warn('User not found during subscription.created', {
+        customerId: subscription.customer
+      });
+      return;
+    }
+
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId: user.userId },
+      UpdateExpression: 'SET verified = :v, stripeSubscriptionId = :sid, updatedAt = :ua',
+      ExpressionAttributeValues: {
+        ':v': true,
+        ':sid': subscription.id,
+        ':ua': new Date().toISOString()
+      }
+    }));
+
+    logger.info('User verified and subscription saved', {
+      userId: user.userId,
+      subscriptionId: subscription.id
+    });
+
+  } catch (error) {
+    logger.error('Error handling subscription.created', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+}
+
+
+async function handleSubscriptionDeleted(subscription) {
+  try {
+    const customer = await stripe.customers.retrieve(subscription.customer);
+    const user = await findUserRef(subscription, customer);
+
+    if (!user) {
+      logger.warn('User not found during subscription.deleted', {
+        customerId: subscription.customer
+      });
+      return;
+    }
+
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId: user.userId },
+      UpdateExpression: 'SET verified = :v, stripeSubscriptionId = :sid, updatedAt = :ua',
+      ExpressionAttributeValues: {
+        ':v': false,
+        ':sid': 'unsubscribed',
+        ':ua': new Date().toISOString()
+      }
+    }));
+
+    logger.info('User unsubscribed and verification removed', {
+      userId: user.userId,
+      subscriptionId: subscription.id
+    });
+
+  } catch (error) {
+    logger.error('Error handling subscription.deleted', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+}
+
+
+
 
 async function handleSubscriptionChange(subscription) {
   try {
@@ -358,6 +443,48 @@ async function findUserRef(stripeObject, customer) {
   
   return null;
 }
+
+
+app.post("/api/unsubscribe", async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  try {
+    const { Item: user } = await dynamo.send(
+      new GetCommand({
+        TableName: "Users",
+        Key: { userId },
+      })
+    );
+
+    if (!user || !user.stripeSubscriptionId) {
+      return res.status(404).json({ error: "User or subscription not found" });
+    }
+
+    // Cancel subscription
+    await stripe.subscriptions.del(user.stripeSubscriptionId);
+
+    // Update user in DynamoDB
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: "Users",
+        Key: { userId },
+        UpdateExpression: "REMOVE stripeSubscriptionId, stripeCustomerId SET verified = :v",
+        ExpressionAttributeValues: {
+          ":v": false,
+        },
+      })
+    );
+
+    res.json({ success: true, message: "Unsubscribed and verification reset" });
+  } catch (error) {
+    console.error("Unsubscribe failed:", error);
+    res.status(500).json({ error: "Unsubscribe failed" });
+  }
+});
 
 
 
