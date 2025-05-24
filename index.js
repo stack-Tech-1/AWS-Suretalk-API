@@ -1116,8 +1116,21 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       return res.status(200).json({
         success: true,
         channel: 'sms',
-        message: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemporary PIN: ${tempPin}\nExpires in 1 hour.`
+        message: `👋 Hello from SureTalk!
+      
+      We received a request to recover your account.
+      
+      🔐 Your temporary access details are:
+      • User ID: ${user.userId}
+      • Temporary PIN: ${tempPin}
+      
+      This PIN will expire in 1 hour.
+      
+      👉 Please reply with your User ID followed by this PIN to continue.
+      
+      Need help? Contact our support at suresupport@suretalknow.com.`
       });
+      
     }
 
     return res.status(200).json({
