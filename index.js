@@ -1095,26 +1095,28 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       });
 
     } else {
-      // 🔐 Temp PIN for SMS users
+       // 🔐 Generate Temporary PIN
       const tempPin = Math.floor(1000 + Math.random() * 9000).toString();
       const hashedPin = await bcrypt.hash(tempPin, 12);
       const pinExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
+      // 💾 Update user in DynamoDB
       await dynamo.send(new UpdateCommand({
         TableName: 'Users',
         Key: { userId: user.userId },
-        UpdateExpression: 'SET tempPin = :tp, tempPinExpiry = :tpe, requiresPinReset = :r',
+        UpdateExpression: 'SET tempPin = :tp, tempPinExpiry = :te, requiresPinReset = :r',
         ExpressionAttributeValues: {
           ':tp': hashedPin,
-          ':tpe': pinExpiry.toISOString(),
+          ':te': pinExpiry.toISOString(),
           ':r': true
         }
       }));
 
-      await twilioClient.messages.create({
-        body: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemporary PIN: ${tempPin}\nExpires in 1 hour.`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: user.phone
+      // ✅ Instead of sending SMS from backend, return it to Twilio
+      return res.status(200).json({
+        success: true,
+        channel: 'sms',
+        message: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemporary PIN: ${tempPin}\nExpires in 1 hour.`
       });
     }
 
