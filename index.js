@@ -1406,6 +1406,7 @@ app.post('/twilio-payment-handler', (req, res) => {
 
   const gather = twiml.gather({
     numDigits: 10,
+    finishOnKey: '#',
     action: 'https://api.suretalknow.com/twilio-capture-number',
     method: 'POST'
   });
