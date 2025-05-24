@@ -1026,13 +1026,14 @@ app.post('/api/login', async (req, res) => {
 // Request recovery - Fixed Version
 app.post('/api/request-recovery', limiter, async (req, res) => {
   try {
-    const { email, phone } = req.body;
+    const { email, userId } = req.body;
 
-    if (!email && !phone) {
-      return res.status(400).json({ error: 'Email or phone number is required' });
+    if (!email && !userId) {
+      return res.status(400).json({ error: 'Email or user ID is required' });
     }
 
-    let user, identifier;
+    let user;
+
     if (email) {
       const normalizedEmail = sanitizeHtml(email).toLowerCase().trim();
       const result = await dynamo.send(new QueryCommand({
@@ -1042,27 +1043,27 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
         ExpressionAttributeValues: { ':email': normalizedEmail },
         Limit: 1
       }));
+
       if (!result.Items || result.Items.length === 0) {
         return res.status(404).json({ error: 'No account found with this email' });
       }
+
       user = result.Items[0];
-      identifier = normalizedEmail;
     } else {
-      const cleanPhone = phone.replace(/\D/g, '');
-      const result = await dynamo.send(new QueryCommand({
+      // 📌 Handle recovery by userId directly
+      const { Item } = await dynamo.send(new GetCommand({
         TableName: 'Users',
-        IndexName: 'phone-index',
-        KeyConditionExpression: 'phone = :phone',
-        ExpressionAttributeValues: { ':phone': cleanPhone },
-        Limit: 1
+        Key: { userId }
       }));
-      if (!result.Items || result.Items.length === 0) {
-        return res.status(404).json({ error: 'No account found with this phone number' });
+
+      if (!Item) {
+        return res.status(404).json({ error: 'No account found with this user ID' });
       }
-      user = result.Items[0];
-      identifier = cleanPhone;
+
+      user = Item;
     }
 
+    // Generate recovery token
     const recoveryToken = generateToken();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
@@ -1081,7 +1082,7 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
     }));
 
     if (user.email) {
-      // ✅ Email recovery path (same as before)
+      // ✅ Email-based recovery
       const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
       await transporter.sendMail({
         from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
@@ -1091,46 +1092,45 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
           <p>We received a request to recover your account.</p>
           <p><a href="${recoveryLink}">Recover Account</a> (valid for 1 hour)</p>
         `
-      });    
+      });
+
     } else {
-      // 🔐 Generate Temporary PIN
+      // 🔐 Temp PIN for SMS users
       const tempPin = Math.floor(1000 + Math.random() * 9000).toString();
       const hashedPin = await bcrypt.hash(tempPin, 12);
       const pinExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-    
-      // 💾 Update user in DynamoDB
+
       await dynamo.send(new UpdateCommand({
         TableName: 'Users',
         Key: { userId: user.userId },
-        UpdateExpression: 'SET tempPin = :tp, tempPinExpiry = :te, requiresPinReset = :r',
+        UpdateExpression: 'SET tempPin = :tp, tempPinExpiry = :tpe, requiresPinReset = :r',
         ExpressionAttributeValues: {
           ':tp': hashedPin,
-          ':te': pinExpiry.toISOString(),
+          ':tpe': pinExpiry.toISOString(),
           ':r': true
         }
       }));
-    
-      // 📲 Send PIN via SMS
+
       await twilioClient.messages.create({
-        body: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemp PIN: ${tempPin}\nExpires in 1 hour.`,
+        body: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemporary PIN: ${tempPin}\nExpires in 1 hour.`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: user.phone
       });
     }
-    
 
-    res.status(200).json({ 
+    return res.status(200).json({
       success: true,
-      message: user.email 
+      message: user.email
         ? 'Recovery email sent.'
         : 'Recovery SMS sent.'
     });
 
   } catch (err) {
     logger.error('Recovery request failed', { error: err.message });
-    res.status(500).json({ error: 'Recovery failed' });
+    return res.status(500).json({ error: 'Recovery failed' });
   }
 });
+
 
 
 // Complete recovery - Fixed Version
