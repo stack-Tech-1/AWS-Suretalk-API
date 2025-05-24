@@ -1406,16 +1406,21 @@ app.post('/twilio-payment-handler', (req, res) => {
 
   const gather = twiml.gather({
     numDigits: 10,
-    finishOnKey: '#',
+    finishOnKey: '#',           
     action: 'https://api.suretalknow.com/twilio-capture-number',
-    method: 'POST'
+    method: 'POST',
+    timeout: 10                 
   });
 
   gather.say("Please enter your 10-digit I.D number, followed by the pound key.");
 
+  // If no input, redirect back to the same prompt
+  twiml.redirect('https://api.suretalknow.com/twilio-payment-handler');
+
   res.type('text/xml');
   res.send(twiml.toString());
 });
+
 
 
 // Twilio endpoint
