@@ -1026,46 +1026,52 @@ app.post('/api/login', async (req, res) => {
 // Request recovery - Fixed Version
 app.post('/api/request-recovery', limiter, async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, phone } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ 
-        status: 'error',
-        error: 'Email is required',
-        code: 'MISSING_EMAIL'
-      });
+    if (!email && !phone) {
+      return res.status(400).json({ error: 'Email or phone number is required' });
     }
 
-    const normalizedEmail = sanitizeHtml(email).toLowerCase().trim();
-
-    // Check if user exists in DynamoDB
-    const result = await dynamo.send(new QueryCommand({
-      TableName: 'Users',
-      IndexName: 'email-index',
-      KeyConditionExpression: 'email = :email',
-      ExpressionAttributeValues: { ':email': normalizedEmail },
-      Limit: 1
-    }));
-
-    if (!result.Items || result.Items.length === 0) {
-      return res.status(404).json({ 
-        status: 'error',
-        error: 'No account found with this email',
-        code: 'USER_NOT_FOUND'
-      });
+    let user, identifier;
+    if (email) {
+      const normalizedEmail = sanitizeHtml(email).toLowerCase().trim();
+      const result = await dynamo.send(new QueryCommand({
+        TableName: 'Users',
+        IndexName: 'email-index',
+        KeyConditionExpression: 'email = :email',
+        ExpressionAttributeValues: { ':email': normalizedEmail },
+        Limit: 1
+      }));
+      if (!result.Items || result.Items.length === 0) {
+        return res.status(404).json({ error: 'No account found with this email' });
+      }
+      user = result.Items[0];
+      identifier = normalizedEmail;
+    } else {
+      const cleanPhone = phone.replace(/\D/g, '');
+      const result = await dynamo.send(new QueryCommand({
+        TableName: 'Users',
+        IndexName: 'phone-index',
+        KeyConditionExpression: 'phone = :phone',
+        ExpressionAttributeValues: { ':phone': cleanPhone },
+        Limit: 1
+      }));
+      if (!result.Items || result.Items.length === 0) {
+        return res.status(404).json({ error: 'No account found with this phone number' });
+      }
+      user = result.Items[0];
+      identifier = cleanPhone;
     }
 
-    const user = result.Items[0];
     const recoveryToken = generateToken();
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 1);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-    // Save recovery token in DynamoDB
     await dynamo.send(new PutCommand({
       TableName: 'VerificationTokens',
       Item: {
         token: recoveryToken,
-        email: normalizedEmail,
+        email: user.email || null,
+        phone: user.phone || null,
         userId: user.userId,
         expiresAt: expiresAt.toISOString(),
         used: false,
@@ -1074,43 +1080,58 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       }
     }));
 
-    // Send recovery email
-    const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
+    if (user.email) {
+      // ✅ Email recovery path (same as before)
+      const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
+      await transporter.sendMail({
+        from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
+        to: user.email,
+        subject: 'Account Recovery Request',
+        html: `
+          <p>We received a request to recover your account.</p>
+          <p><a href="${recoveryLink}">Recover Account</a> (valid for 1 hour)</p>
+        `
+      });    
+    } else {
+      // 🔐 Generate Temporary PIN
+      const tempPin = Math.floor(1000 + Math.random() * 9000).toString();
+      const hashedPin = await bcrypt.hash(tempPin, 12);
+      const pinExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
     
-    await transporter.sendMail({
-      from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
-      to: normalizedEmail,
-      subject: 'Account Recovery Request',
-      html: `
-        <p>We received a request to recover your account information.</p>
-        <p>Click the link below to view your User ID and PIN (valid for 1 hour):</p>
-        <a href="${recoveryLink}">Recover Account</a>
-        <p>If you didn't request this, please ignore this email.</p>
-      `
-    });
+      // 💾 Update user in DynamoDB
+      await dynamo.send(new UpdateCommand({
+        TableName: 'Users',
+        Key: { userId: user.userId },
+        UpdateExpression: 'SET tempPin = :tp, tempPinExpiry = :te, requiresPinReset = :r',
+        ExpressionAttributeValues: {
+          ':tp': hashedPin,
+          ':te': pinExpiry.toISOString(),
+          ':r': true
+        }
+      }));
+    
+      // 📲 Send PIN via SMS
+      await twilioClient.messages.create({
+        body: `SureTalk Recovery:\nUser ID: ${user.userId}\nTemp PIN: ${tempPin}\nExpires in 1 hour.`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: user.phone
+      });
+    }
+    
 
     res.status(200).json({ 
-      status: 'success',
-      message: 'Recovery email sent. Please check your inbox.',
-      data: {
-        email: normalizedEmail,
-        timestamp: new Date().toISOString()
-      }
+      success: true,
+      message: user.email 
+        ? 'Recovery email sent.'
+        : 'Recovery SMS sent.'
     });
 
-  } catch (error) {
-    logger.error('Recovery request failed', { 
-      error: error.message,
-      stack: error.stack
-    });
-    res.status(500).json({ 
-      status: 'error',
-      error: 'Account recovery failed',
-      code: 'SERVER_ERROR',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+  } catch (err) {
+    logger.error('Recovery request failed', { error: err.message });
+    res.status(500).json({ error: 'Recovery failed' });
   }
 });
+
 
 // Complete recovery - Fixed Version
 app.post('/api/complete-recovery', limiter, async (req, res) => {
@@ -1364,46 +1385,65 @@ for (const varName of requiredVars) {
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Twilio endpoint
-app.post('/twilio-payment-handler', (req, res) => {
-  try {
-    const twiml = new Twilio.twiml.VoiceResponse();
-    
-    twiml.say("We are saving your card for future monthly payments.");
-    twiml.pay({
-      paymentConnector: "Stripe_Connector_Main",
-      tokenType: "payment-method",
-      postalCode: false,
-      action: "https://api.suretalknow.com/start-payment-setup" 
-    });
 
-    res.type('text/xml');
-res.send(twiml.toString());
-  } catch (err) {
-    console.error('Twilio handler error:', err);
-    res.status(500).send('Server error');
-  }
+app.post('/twilio-payment-handler', (req, res) => {
+  const twiml = new Twilio.twiml.VoiceResponse();
+
+  const gather = twiml.gather({
+    numDigits: 10,
+    action: '/twilio-capture-number',
+    method: 'POST'
+  });
+
+  gather.say("Please enter your 10-digit I.D number, followed by the pound key.");
+
+  res.type('text/xml');
+  res.send(twiml.toString());
 });
+
+
+// Twilio endpoint
+app.post('/twilio-capture-number', (req, res) => {
+  const phoneNumber = req.body.Digits; // Collected from <Gather>
+  const twiml = new Twilio.twiml.VoiceResponse();
+
+  twiml.say("Thank you. Now saving your card for monthly payments.");
+
+  twiml.pay({
+    paymentConnector: "Stripe_Connector_Main",
+    tokenType: "payment-method",
+    postalCode: false,
+    action: `https://api.suretalknow.com/start-payment-setup?phone=${phoneNumber}`
+  });
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
 
 // Payment processing endpoint
 app.post('/start-payment-setup', async (req, res) => {
   try {
-    console.log('Payment webhook received:', req.body);
-    
     const { PaymentToken, Result, FlowSid, FlowExecutionSid } = req.body;
-    
+    const phone = req.query.phone;
+
     if (Result !== 'success' || !PaymentToken) {
       throw new Error(`Payment failed - Result: ${Result}, Token: ${!!PaymentToken}`);
     }
 
-    // Process Stripe subscription
-    const customer = await stripe.customers.create();
+    // Create customer with phone number
+    const customer = await stripe.customers.create({
+      phone,
+      metadata: { phone }
+    });
+
     await stripe.paymentMethods.attach(PaymentToken, { customer: customer.id });
+
     await stripe.customers.update(customer.id, {
       invoice_settings: { default_payment_method: PaymentToken }
     });
 
-    await stripe.subscriptions.create({
+    const subscription = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{ price: process.env.STRIPE_DEFAULT_PRICE_ID }],
       payment_settings: {
@@ -1412,26 +1452,18 @@ app.post('/start-payment-setup', async (req, res) => {
       }
     });
 
-    if (!process.env.STRIPE_DEFAULT_PRICE_ID) {
-      throw new Error('STRIPE_DEFAULT_PRICE_ID is not defined in environment');
-    }    
+    console.log('✅ Subscription created for:', phone, customer.id);
 
-    console.log('✅ Subscription created for:', customer.id);
-
-    // TwiML response
+    // Build TwiML Response
     const twiml = new Twilio.twiml.VoiceResponse();
-    twiml.say("Thank you! Your payment was processed successfully.");
-    
-    // Use the FlowSid from the request if available, fallback to env var
+    twiml.say("Thank you. Your payment was successful.");
+
     const flowSid = FlowSid || process.env.STUDIO_FLOW_SID;
-    
     if (FlowExecutionSid) {
-      // If we have execution context, use the execution-aware return URL
       twiml.redirect({
         method: 'POST'
       }, `https://webhooks.twilio.com/v1/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Flows/${flowSid}/Executions/${FlowExecutionSid}`);
     } else {
-      // Fallback to simple return (may not work as well)
       twiml.redirect({
         method: 'POST'
       }, `https://webhooks.twilio.com/v1/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Flows/${flowSid}?FlowEvent=return`);
