@@ -1409,7 +1409,7 @@ app.post('/twilio-payment-handler', (req, res) => {
     finishOnKey: '#',           
     action: 'https://api.suretalknow.com/twilio-capture-number',
     method: 'POST',
-    timeout: 10                 
+    timeout: 15                 
   });
 
   gather.say("Please enter your 10-digit I.D number, followed by the pound key.");
