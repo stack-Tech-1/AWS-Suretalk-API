@@ -1425,7 +1425,7 @@ app.post('/twilio-payment-handler', (req, res) => {
 
 // Twilio endpoint
 app.post('/twilio-capture-number', (req, res) => {
-  const phoneNumber = req.body.Digits; // Collected from <Gather>
+  const userId = req.body.Digits;
   const twiml = new Twilio.twiml.VoiceResponse();
 
   twiml.say("Thank you. Now saving your card for monthly payments.");
@@ -1434,7 +1434,7 @@ app.post('/twilio-capture-number', (req, res) => {
     paymentConnector: "Stripe_Connector_Main",
     tokenType: "payment-method",
     postalCode: false,
-    action: `https://api.suretalknow.com/start-payment-setup?phone=${phoneNumber}`
+    action: `https://api.suretalknow.com/start-payment-setup?userId=${userId}`
   });
 
   res.type('text/xml');
@@ -1446,7 +1446,7 @@ app.post('/twilio-capture-number', (req, res) => {
 app.post('/start-payment-setup', async (req, res) => {
   try {
     const { PaymentToken, Result, FlowSid, FlowExecutionSid } = req.body;
-    const phone = req.query.phone;
+    const userId = req.query.userId;
 
     if (Result !== 'success' || !PaymentToken) {
       throw new Error(`Payment failed - Result: ${Result}, Token: ${!!PaymentToken}`);
@@ -1454,9 +1454,8 @@ app.post('/start-payment-setup', async (req, res) => {
 
     // Create customer with phone number
     const customer = await stripe.customers.create({
-      phone,
-      metadata: { phone }
-    });
+      metadata: { userId }
+    });    
 
     await stripe.paymentMethods.attach(PaymentToken, { customer: customer.id });
 
