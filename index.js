@@ -400,16 +400,37 @@ async function handlePaymentFailure(invoice) {
 
 
 async function findUserRef(stripeObject, customer) {
-  // 1. Try metadata.userId (from when the customer was created)
+  // 1. First try metadata.userId (from when the customer was created)
   if (stripeObject.metadata?.userId) {
     const { Item: user } = await dynamo.send(new GetCommand({
       TableName: 'Users',
       Key: { userId: stripeObject.metadata.userId }
     }));
-    if (user) return user;
+    if (user) {
+      logger.info('Found user via metadata.userId', {
+        userId: user.userId,
+        source: 'metadata'
+      });
+      return user;
+    }
   }
 
-  // 2. Try matching by stripeCustomerId if metadata is missing
+  // 2. If customer was just created, check the customer metadata
+  if (customer.metadata?.userId) {
+    const { Item: user } = await dynamo.send(new GetCommand({
+      TableName: 'Users',
+      Key: { userId: customer.metadata.userId }
+    }));
+    if (user) {
+      logger.info('Found user via customer.metadata.userId', {
+        userId: user.userId,
+        source: 'customer_metadata'
+      });
+      return user;
+    }
+  }
+
+  // 3. Try matching by stripeCustomerId if metadata is missing
   if (customer.id) {
     const result = await dynamo.send(new QueryCommand({
       TableName: 'Users',
@@ -421,11 +442,36 @@ async function findUserRef(stripeObject, customer) {
       Limit: 1
     }));
     if (result.Items?.length > 0) {
+      logger.info('Found user via stripeCustomerId index', {
+        userId: result.Items[0].userId,
+        source: 'stripeCustomerId_index'
+      });
       return result.Items[0];
     }
   }
 
-  // 3. Fallback: Try email lookup
+  // 4. Fallback: Try phone lookup (important for Twilio flows)
+  if (customer.phone) {
+    const cleanedPhone = customer.phone.replace(/\D/g, '');
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'phone-index',
+      KeyConditionExpression: 'phone = :phone',
+      ExpressionAttributeValues: {
+        ':phone': cleanedPhone
+      },
+      Limit: 1
+    }));
+    if (result.Items?.length > 0) {
+      logger.info('Found user via phone number', {
+        userId: result.Items[0].userId,
+        source: 'phone_index'
+      });
+      return result.Items[0];
+    }
+  }
+
+  // 5. Final fallback: Try email lookup
   if (customer.email) {
     const result = await dynamo.send(new QueryCommand({
       TableName: 'Users',
@@ -435,27 +481,24 @@ async function findUserRef(stripeObject, customer) {
       Limit: 1
     }));
     if (result.Items?.length > 0) {
+      logger.info('Found user via email', {
+        userId: result.Items[0].userId,
+        source: 'email_index'
+      });
       return result.Items[0];
     }
   }
 
-  // 4. Fallback: Try phone lookup
-  if (customer.phone) {
-    const result = await dynamo.send(new QueryCommand({
-      TableName: 'Users',
-      IndexName: 'phone-index',
-      KeyConditionExpression: 'phone = :phone',
-      ExpressionAttributeValues: {
-        ':phone': customer.phone.replace(/\D/g, '')
-      },
-      Limit: 1
-    }));
-    if (result.Items?.length > 0) {
-      return result.Items[0];
-    }
-  }
+  // No match found - log all available info for debugging
+  logger.error('No user found for Stripe object', {
+    stripeObjectId: stripeObject.id,
+    stripeObjectType: stripeObject.object,
+    customerId: customer.id,
+    customerEmail: customer.email,
+    customerPhone: customer.phone,
+    metadata: stripeObject.metadata || customer.metadata
+  });
 
-  // No match found
   return null;
 }
 
@@ -1468,9 +1511,12 @@ app.post('/start-payment-setup', async (req, res) => {
       throw new Error(`Payment failed - Result: ${Result}, Token: ${!!PaymentToken}`);
     }
 
-    // Create customer with phone number
+    // Create customer with phone number AND include userId in metadata
     const customer = await stripe.customers.create({
-      metadata: { userId }
+      metadata: { 
+        userId: userId,
+        source: 'twilio_ivr' // Helps with debugging
+      }    
     });    
 
     await stripe.paymentMethods.attach(PaymentToken, { customer: customer.id });
@@ -1482,6 +1528,7 @@ app.post('/start-payment-setup', async (req, res) => {
     const subscription = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{ price: process.env.STRIPE_DEFAULT_PRICE_ID }],
+      metadata: { userId: userId }, 
       payment_settings: {
         payment_method_types: ['card'],
         save_default_payment_method: 'on_subscription'
@@ -1489,6 +1536,23 @@ app.post('/start-payment-setup', async (req, res) => {
     });
 
     console.log('✅ Subscription created for:', userId, customer.id);
+
+    // Immediately update DynamoDB 
+    try {
+      await dynamo.send(new UpdateCommand({
+        TableName: 'Users',
+        Key: { userId },
+        UpdateExpression: 'SET stripeCustomerId = :cid, stripeSubscriptionId = :sid, verified = :v',
+        ExpressionAttributeValues: {
+          ':cid': customer.id,
+          ':sid': subscription.id,
+          ':v': true
+        }
+      }));
+      console.log('✅ Updated DynamoDB user record');
+    } catch (dbError) {
+      console.error('❌ Failed to update DynamoDB:', dbError);
+    }
 
     // Build TwiML Response
     const twiml = new Twilio.twiml.VoiceResponse();
