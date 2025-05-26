@@ -1515,7 +1515,7 @@ app.post('/start-payment-setup', async (req, res) => {
     const customer = await stripe.customers.create({
       metadata: { 
         userId: userId,
-        source: 'twilio_ivr' // Helps with debugging
+        source: 'twilio_ivr' 
       }    
     });    
 
@@ -1537,7 +1537,7 @@ app.post('/start-payment-setup', async (req, res) => {
 
     console.log('✅ Subscription created for:', userId, customer.id);
 
-    // Immediately update DynamoDB 
+    // update DynamoDB 
     try {
       await dynamo.send(new UpdateCommand({
         TableName: 'Users',
