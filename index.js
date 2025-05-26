@@ -400,7 +400,7 @@ async function handlePaymentFailure(invoice) {
 
 
 async function findUserRef(stripeObject, customer) {
-  // 1. Try metadata first
+  // 1. Try metadata.userId (from when the customer was created)
   if (stripeObject.metadata?.userId) {
     const { Item: user } = await dynamo.send(new GetCommand({
       TableName: 'Users',
@@ -408,8 +408,24 @@ async function findUserRef(stripeObject, customer) {
     }));
     if (user) return user;
   }
-  
-  // 2. Try email lookup
+
+  // 2. Try matching by stripeCustomerId if metadata is missing
+  if (customer.id) {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: 'Users',
+      IndexName: 'stripeCustomerId-index',
+      KeyConditionExpression: 'stripeCustomerId = :scid',
+      ExpressionAttributeValues: {
+        ':scid': customer.id
+      },
+      Limit: 1
+    }));
+    if (result.Items?.length > 0) {
+      return result.Items[0];
+    }
+  }
+
+  // 3. Fallback: Try email lookup
   if (customer.email) {
     const result = await dynamo.send(new QueryCommand({
       TableName: 'Users',
@@ -418,13 +434,12 @@ async function findUserRef(stripeObject, customer) {
       ExpressionAttributeValues: { ':email': customer.email },
       Limit: 1
     }));
-    
-    if (result.Items && result.Items.length > 0) {
+    if (result.Items?.length > 0) {
       return result.Items[0];
     }
   }
-  
-  // 3. Try phone lookup
+
+  // 4. Fallback: Try phone lookup
   if (customer.phone) {
     const result = await dynamo.send(new QueryCommand({
       TableName: 'Users',
@@ -435,14 +450,15 @@ async function findUserRef(stripeObject, customer) {
       },
       Limit: 1
     }));
-    
     if (result.Items?.length > 0) {
       return result.Items[0];
-    }    
+    }
   }
-  
+
+  // No match found
   return null;
 }
+
 
 
 app.post("/api/unsubscribe", async (req, res) => {
