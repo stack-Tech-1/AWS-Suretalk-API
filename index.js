@@ -1183,9 +1183,7 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
       • User ID: ${user.userId}
       • Temporary PIN: ${tempPin}
       
-      This PIN will expire in 1 hour.
-      
-      👉 Please reply with your User ID followed by this PIN to continue.
+      This PIN will expire in 1 hour.      
       
       Need help? Contact our support at Contact@SureTalkNow.Com`
       });
