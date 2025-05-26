@@ -1472,7 +1472,7 @@ app.post('/start-payment-setup', async (req, res) => {
       }
     });
 
-    console.log('✅ Subscription created for:', phone, customer.id);
+    console.log('✅ Subscription created for:', userId, customer.id);
 
     // Build TwiML Response
     const twiml = new Twilio.twiml.VoiceResponse();
