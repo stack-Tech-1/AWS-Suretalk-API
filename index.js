@@ -1529,12 +1529,14 @@ app.post('/start-payment-setup', async (req, res) => {
     const subscription = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{ price: process.env.STRIPE_DEFAULT_PRICE_ID }],
-      metadata: { userId: userId }, 
+      trial_period_days: 30, // no charge until after 30 days
+      metadata: { userId: userId },
       payment_settings: {
         payment_method_types: ['card'],
         save_default_payment_method: 'on_subscription'
       }
     });
+    
 
     console.log('✅ Subscription created for:', userId, customer.id);
 
