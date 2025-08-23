@@ -33,6 +33,7 @@ const s3 = new AWS.S3({
   secretAccessKey: process.env.AWS_SECRET_KEY,
   region: process.env.AWS_REGION
 });
+
 const uploadToS3 = async (filePath, s3Key) => {
   const fileContent = fs.readFileSync(filePath);
   const uploadParams = {
@@ -191,8 +192,11 @@ app.post('/api/stripe-webhook',
   }
 );
 
+
       //console.log('[Stripe Hook] Headers:', req.headers);
       //console.log('[Stripe Hook] Raw body type:', typeof req.body);
+
+
 
 // ==================== Helper Functions ====================
 
@@ -643,18 +647,56 @@ const sendVerificationEmail = async (email, userId) => {
   }));
   
   const verificationLink = `${process.env.FRONTEND_URL}/confirm-email-link?token=${token}`;
-  const subscriptionLink = "https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01";   
-  await transporter.sendMail({
-    from: `"SureTalk" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: 'Verify Your Email Address',
-    html: `
-      <h2>Welcome to SureTalk!</h2>
-      <p>Please verify your email address to complete your registration:</p>
-      <a href="${verificationLink}" style="...">Verify Email</a>      
-      <p>This link expires in 24 hours.</p>
-    `
-  });
+  const subscriptionLink = "https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01";
+
+await transporter.sendMail({
+  from: `"SureTalk" <${process.env.EMAIL_USER}>`,
+  to: email,
+  subject: 'Verify Your Email Address',
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 6px; background-color: #ffffff;">
+      
+        <!-- Logo -->
+        <div style="text-align: center; margin-bottom: 20px;">
+          <img src="https://i0.wp.com/suretalknow.com/wp-content/uploads/2025/02/fulllogo.png?resize=300%2C240&ssl=1" alt="SureTalk Logo" style="width: 120px; height: auto;" />
+        </div>
+        
+        <h2 style="color: #333; text-align: center;">Welcome to <span style="color: #4a90e2;">SureTalk</span>!</h2>
+  
+        <p style="font-size: 16px; color: #555; text-align: center;">We're excited to have you onboard. Please confirm your email address to activate your account.</p>
+        
+        <!-- Verify Email Button -->
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${verificationLink}" style="background-color: #4a90e2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
+            Verify Email
+          </a>
+        </div>
+  
+        <p style="font-size: 14px; color: #777; text-align: center;">This verification link will expire in 24 hours.</p>
+  
+        <!-- Subscription CTA -->
+        <div style="text-align: center; margin: 40px 0 10px;">
+          <p style="font-size: 15px; color: #555;">Want to unlock premium features now?</p>
+          <a href="${subscriptionLink}" style="color: #4a90e2; font-weight: bold; text-decoration: none;">
+            Subscribe to SureTalk Premium
+          </a>
+        </div>
+  
+        <hr style="border: none; border-top: 1px solid #eee; margin: 40px 0;">
+  
+        <!-- Footer -->
+        <div style="font-size: 12px; color: #aaa; text-align: center;">
+          <p>If you didn’t sign up for SureTalk, you can safely ignore this email.</p>
+          <p>Need help? Contact us at <a href="mailto:support@suretalknow.com" style="color: #4a90e2;">support@suretalknow.com</a></p>
+          <p>© ${new Date().getFullYear()} SureTalk. All rights reserved.</p>
+        </div>
+      </div>
+  
+  </div>
+  `
+});
+
+
 };
 
 function generateAuthToken(userId) {
@@ -807,11 +849,35 @@ const sendDiscontinuationEmail = async (email, firstName) => {
       to: email,
       subject: 'We Miss You at SureTalk',
       html: `
-        <h2>Hi ${firstName},</h2>
-        <p>We noticed your SureTalk service has been discontinued.</p>
-        <p>We'd love to have you back! Here's a special link to resubscribe:</p>
-        <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01">Resubscribe to SureTalk</a>
-        <p>If this was a mistake, please contact our support team.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 6px; background-color: #ffffff;">
+          
+          <!-- Logo -->
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="https://i0.wp.com/suretalknow.com/wp-content/uploads/2025/02/fulllogo.png?resize=300%2C240&ssl=1" alt="SureTalk Logo" style="width: 120px; height: auto;" />
+          </div>
+          
+          <h2 style="color: #333;">Hi ${firstName},</h2>
+          <p style="font-size: 16px; color: #555;">We noticed your SureTalk service has been discontinued.</p>
+          
+          <p style="font-size: 16px; color: #555;">We’d love to have you back. Click the button below to reactivate your subscription:</p>
+          
+          <!-- Resubscribe Button -->
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01" style="background-color: #4a90e2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
+              Resubscribe to SureTalk
+            </a>
+          </div>
+
+          <p style="font-size: 14px; color: #777;">If you believe this was a mistake or have any questions, please contact our support team.</p>
+
+          <hr style="border: none; border-top: 1px solid #eee; margin: 40px 0;">
+
+          <!-- Footer -->
+          <div style="font-size: 12px; color: #aaa; text-align: center;">
+            <p>Need help? Reach out to <a href="mailto:support@suretalknow.com" style="color: #4a90e2;">support@suretalknow.com</a></p>
+            <p>© ${new Date().getFullYear()} SureTalk. All rights reserved.</p>
+          </div>
+        </div>
       `
     });
     logger.info('Discontinuation email sent', { email });
@@ -892,17 +958,42 @@ const sendWelcomeEmail = async (email, firstName) => {
       to: email,
       subject: 'Welcome to SureTalk!',
       html: `
-        <h2>Welcome to SureTalk, ${firstName}!</h2>
-        <p>Thank you for joining our community.</p>
-        <p>You can now complete your subscription to start using our services:</p>
-        <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01">Complete Subscription</a>
-        <p>If you have any questions, please reply to this email.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 6px; background-color: #ffffff;">
+          
+          <!-- Logo -->
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="https://i0.wp.com/suretalknow.com/wp-content/uploads/2025/02/fulllogo.png?resize=300%2C240&ssl=1" alt="SureTalk Logo" style="width: 120px; height: auto;" />
+          </div>
+
+          <h2 style="color: #333;">Welcome to SureTalk, ${firstName}!</h2>
+          <p style="font-size: 16px; color: #555;">Thank you for joining our community. We're excited to have you on board.</p>
+
+          <p style="font-size: 16px; color: #555;">To start using SureTalk, please complete your subscription by clicking the button below:</p>
+
+          <!-- Subscription Button -->
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="https://buy.stripe.com/3cI28qbfTasqa0r26Q08g01" style="background-color: #4a90e2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
+              Complete Subscription
+            </a>
+          </div>
+
+          <p style="font-size: 14px; color: #777;">If you have any questions or need assistance, just reply to this email — we’re here to help.</p>
+
+          <hr style="border: none; border-top: 1px solid #eee; margin: 40px 0;">
+
+          <!-- Footer -->
+          <div style="font-size: 12px; color: #aaa; text-align: center;">
+            <p>Need help? Reach out to <a href="mailto:support@suretalknow.com" style="color: #4a90e2;">support@suretalknow.com</a></p>
+            <p>© ${new Date().getFullYear()} SureTalk. All rights reserved.</p>
+          </div>
+        </div>
       `
     });
   } catch (error) {
     logger.error('Failed to send welcome email', { email, error });
   }
 };
+
 
 
 
@@ -1142,16 +1233,44 @@ app.post('/api/request-recovery', limiter, async (req, res) => {
 
     if (user.email) {
       // ✅ Email-based recovery
-      const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
-      await transporter.sendMail({
-        from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
-        to: user.email,
-        subject: 'Account Recovery Request',
-        html: `
-          <p>We received a request to recover your account.</p>
-          <p><a href="${recoveryLink}">Recover Account</a> (valid for 1 hour)</p>
-        `
-      });
+const recoveryLink = `${process.env.FRONTEND_URL}/recover-account?token=${recoveryToken}`;
+await transporter.sendMail({
+  from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
+  to: user.email,
+  subject: 'Account Recovery Request',
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 6px; background-color: #ffffff;">
+      
+      <!-- Logo -->
+      <div style="text-align: center; margin-bottom: 20px;">
+        <img src="https://i0.wp.com/suretalknow.com/wp-content/uploads/2025/02/fulllogo.png?resize=300%2C240&ssl=1" alt="SureTalk Logo" style="width: 120px; height: auto;" />
+      </div>
+
+      <h2 style="color: #333;">Account Recovery Requested</h2>
+      <p style="font-size: 16px; color: #555;">We received a request to recover your SureTalk account.</p>
+      
+      <p style="font-size: 16px; color: #555;">If you initiated this request, click the button below to recover your account:</p>
+
+      <!-- Recovery Button -->
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${recoveryLink}" style="background-color: #d9534f; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
+          Recover Account
+        </a>
+      </div>
+
+      <p style="font-size: 14px; color: #777;">This link is valid for 1 hour. If you did not request this, please ignore this email or contact our support team.</p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 40px 0;">
+
+      <!-- Footer -->
+      <div style="font-size: 12px; color: #aaa; text-align: center;">
+        <p>Need help? Contact us at <a href="mailto:support@suretalknow.com" style="color: #4a90e2;">support@suretalknow.com</a></p>
+        <p>© ${new Date().getFullYear()} SureTalk. All rights reserved.</p>
+      </div>
+    </div>
+  `
+});
+
 
     } else {
        // 🔐 Generate Temporary PIN
@@ -1277,13 +1396,37 @@ app.post('/api/complete-recovery', limiter, async (req, res) => {
       to: tokenData.email,
       subject: 'Your Temporary Access Details',
       html: `
-        <p>Here are your temporary access details:</p>
-        <p><strong>User ID:</strong> ${user.userId}</p>  
-        <p><strong>Temporary PIN:</strong> ${tempPin}</p>
-        <p>This PIN will expire in 1 hour. You will be required to set a new PIN after login.</p>
-        <p>If you didn't request this, please contact our support team immediately.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 6px; background-color: #ffffff;">
+          
+          <!-- Logo -->
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="https://i0.wp.com/suretalknow.com/wp-content/uploads/2025/02/fulllogo.png?resize=300%2C240&ssl=1" alt="SureTalk Logo" style="width: 120px; height: auto;" />
+          </div>
+    
+          <h2 style="color: #333;">Temporary Access Details</h2>
+          <p style="font-size: 16px; color: #555;">Here are your temporary login credentials:</p>
+    
+          <!-- User ID + PIN -->
+          <div style="background-color: #f8f8f8; padding: 16px; border-radius: 5px; margin: 20px 0;">
+            <p style="font-size: 16px; color: #333;"><strong>User ID:</strong> ${user.userId}</p>  
+            <p style="font-size: 16px; color: #333;"><strong>Temporary PIN:</strong> ${tempPin}</p>
+          </div>
+    
+          <p style="font-size: 14px; color: #777;">This PIN will expire in 1 hour. You’ll be prompted to set a new PIN after logging in.</p>
+    
+          <p style="font-size: 14px; color: #777;">If you didn’t request this access, please <a href="mailto:support@suretalknow.com" style="color: #d9534f;">contact our support team</a> immediately.</p>
+    
+          <hr style="border: none; border-top: 1px solid #eee; margin: 40px 0;">
+    
+          <!-- Footer -->
+          <div style="font-size: 12px; color: #aaa; text-align: center;">
+            <p>Need help? Reach out to <a href="mailto:support@suretalknow.com" style="color: #4a90e2;">support@suretalknow.com</a></p>
+            <p>© ${new Date().getFullYear()} SureTalk. All rights reserved.</p>
+          </div>
+        </div>
       `
     });
+    
 
     res.json({ 
       success: true, 
@@ -1584,6 +1727,141 @@ app.post('/start-payment-setup', async (req, res) => {
     `);
   }
 });
+
+
+
+
+// Spanish payment handler
+app.post('/twilio-payment-handler-es', (req, res) => {
+  const twiml = new Twilio.twiml.VoiceResponse();
+
+  const gather = twiml.gather({
+    numDigits: 10,
+    finishOnKey: '#',
+    action: 'https://api.suretalknow.com/twilio-capture-number-es',
+    method: 'POST',
+    timeout: 15
+  });
+
+  gather.say({ language: 'es-ES' }, 
+    "Por favor, introduzca su número de identificación de diez dígitos, seguido de la tecla numeral.");
+
+  twiml.redirect('https://api.suretalknow.com/twilio-payment-handler-es');
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+
+// Spanish capture number
+app.post('/twilio-capture-number-es', (req, res) => {
+  const userId = req.body.Digits;
+  const twiml = new Twilio.twiml.VoiceResponse();
+
+  twiml.say({ language: 'es-ES' }, 
+    "Gracias. Ahora estamos guardando su tarjeta para pagos mensuales.");
+
+  twiml.pay({
+    paymentConnector: "Stripe_Connector_Main",
+    tokenType: "payment-method",
+    postalCode: false,
+    action: `https://api.suretalknow.com/start-payment-setup-es?userId=${userId}`
+  });
+
+  res.type('text/xml')
+  res.send(twiml.toString());
+});
+
+
+// Spanish payment processing
+app.post('/start-payment-setup-es', async (req, res) => {
+  try {
+    const { PaymentToken, Result, FlowSid, FlowExecutionSid } = req.body;
+    const userId = req.query.userId;
+
+    if (Result !== 'success' || !PaymentToken) {
+      throw new Error(`Payment failed - Result: ${Result}, Token: ${!!PaymentToken}`);
+    }
+
+    const customer = await stripe.customers.create({
+      metadata: { 
+        userId: userId,
+        source: 'twilio_ivr_es' 
+      }
+    });
+
+    await stripe.paymentMethods.attach(PaymentToken, { customer: customer.id });
+
+    await stripe.customers.update(customer.id, {
+      invoice_settings: { default_payment_method: PaymentToken }
+    });
+
+    const subscription = await stripe.subscriptions.create({
+      customer: customer.id,
+      items: [{ price: process.env.STRIPE_DEFAULT_PRICE_ID }],
+      trial_period_days: 30,
+      metadata: { userId: userId },
+      payment_settings: {
+        payment_method_types: ['card'],
+        save_default_payment_method: 'on_subscription'
+      }
+    });
+
+    console.log('✅ Subscription created for:', userId, customer.id);
+
+  try {  
+    await dynamo.send(new UpdateCommand({
+      TableName: 'Users',
+      Key: { userId },
+      UpdateExpression: 'SET stripeCustomerId = :cid, stripeSubscriptionId = :sid, verified = :v',
+      ExpressionAttributeValues: {
+        ':cid': customer.id,
+        ':sid': subscription.id,
+        ':v': true
+      }
+    }));
+    console.log('✅ Updated DynamoDB user record');
+  } catch (dbError) {
+    console.error('❌ Failed to update DynamoDB:', dbError);
+  }
+
+    const twiml = new Twilio.twiml.VoiceResponse();
+    twiml.say({ language: 'es-ES' }, "Gracias. Su pago fue exitoso.");
+
+    const flowSid = FlowSid || process.env.STUDIO_FLOW_SID;
+    if (FlowExecutionSid) {
+      twiml.redirect({ 
+        method: 'POST' 
+      }, `https://webhooks.twilio.com/v1/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Flows/${flowSid}/Executions/${FlowExecutionSid}`);
+    } else {
+      twiml.redirect({ 
+        method: 'POST'
+       }, `https://webhooks.twilio.com/v1/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Flows/${flowSid}?FlowEvent=return`);
+    }
+
+    res.type('text/xml').send(twiml.toString());
+
+  } catch (err) {
+    console.error('❌ Spanish payment processing failed:', err);
+    res.type('text/xml').send(`
+      <Response>
+        <Say language="es-ES">Error: ${err.message.replace(/[^\w\s]/gi, '')}</Say>
+        <Hangup/>
+      </Response>
+    `);
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
 
 
 // Error-handling middleware
