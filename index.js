@@ -300,7 +300,7 @@ async function sendPaymentReminderEmail(email, firstName) {
   }
 }
 
-// Updated subscription handler
+// ✅ Updated subscription handler with reserved keyword fix
 async function handleSubscriptionChange(subscription) {
   try {
     const customer = await stripe.customers.retrieve(subscription.customer);
@@ -324,30 +324,40 @@ async function handleSubscriptionChange(subscription) {
       verified: ['active', 'trialing'].includes(subscription.status)
     };
 
-    // Build safe update expression (alias plan keyword)
-    const updateExpressionParts = Object.keys(subscriptionData).map(k => `#${k} = :${k}`);
-    updateExpressionParts.push('#plan = :plan'); // explicitly handle plan
-
+    // ✅ Explicitly alias reserved keywords (plan & status)
     await dynamo.send(new UpdateCommand({
       TableName: 'Users',
       Key: { userId: user.userId },
-      UpdateExpression: 'SET ' + updateExpressionParts.join(', '),
+      UpdateExpression: `
+        SET #plan = :plan,
+            #status = :status,
+            subscriptionStatus = :subscriptionStatus,
+            stripeSubscriptionId = :subId,
+            currentPeriodEnd = :cpe,
+            updatedAt = :updatedAt,
+            verified = :verified
+      `,
       ExpressionAttributeNames: {
-        ...Object.keys(subscriptionData).reduce((acc, k) => ({ ...acc, [`#${k}`]: k }), {}),
-        '#plan': 'plan'
+        '#plan': 'plan',
+        '#status': 'status'
       },
       ExpressionAttributeValues: {
-        ...Object.fromEntries(Object.entries(subscriptionData).map(([k, v]) => [`:${k}`, v])),
-        ':plan': subscription.items?.data[0]?.plan?.id || 'unknown'
+        ':plan': subscription.items?.data[0]?.plan?.id || 'unknown',
+        ':status': subscription.status,
+        ':subscriptionStatus': subscription.status,
+        ':subId': subscription.id,
+        ':cpe': subscriptionData.currentPeriodEnd,
+        ':updatedAt': subscriptionData.updatedAt,
+        ':verified': subscriptionData.verified
       }
     }));
 
-    // Handle subscription statuses
+    // ✅ Handle subscription statuses
     if (subscription.status === 'past_due') {
       await sendPaymentReminderEmail(user.email, user.firstName || 'Customer');
     }
 
-    if (subscription.status === 'unpaid' || subscription.status === 'canceled') {
+    if (['unpaid', 'canceled'].includes(subscription.status)) {
       await sendDiscontinuationEmail(user.email, user.firstName || 'Customer');
     }
 
@@ -360,6 +370,7 @@ async function handleSubscriptionChange(subscription) {
     throw error;
   }
 }
+
 
 
 
