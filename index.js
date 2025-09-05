@@ -23,7 +23,6 @@ const twilio = require('twilio');
 
 
 
-
 // ==================== Initialize Express ====================
 const app = express();
 
@@ -278,11 +277,35 @@ async function handleSubscriptionDeleted(subscription) {
 
 
 
+// New helper for payment reminders
+async function sendPaymentReminderEmail(email, firstName) {
+  try {
+    await transporter.sendMail({
+      from: `"SureTalk Billing" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Action Needed: Your Subscription is Past Due',
+      html: `
+        <p>Hi ${firstName},</p>
+        <p>Your recent payment attempt has failed, and your subscription is now <b>past due</b>.</p>
+        <p>Please update your payment method to avoid interruption:</p>
+        <a href="${process.env.FRONTEND_URL}/billing" 
+           style="background:#4a90e2;color:white;padding:10px 20px;border-radius:5px;text-decoration:none;">
+          Update Payment Method
+        </a>
+      `
+    });
+    logger.info('Payment reminder email sent', { email });
+  } catch (error) {
+    logger.error('Failed to send payment reminder email', { email, error });
+  }
+}
+
+// Updated subscription handler
 async function handleSubscriptionChange(subscription) {
   try {
     const customer = await stripe.customers.retrieve(subscription.customer);
     const user = await findUserRef(subscription, customer);
-    
+
     if (!user) {
       logger.warn('No matching user found for subscription', {
         subscriptionId: subscription.id,
@@ -294,25 +317,37 @@ async function handleSubscriptionChange(subscription) {
     const subscriptionData = {
       stripeSubscriptionId: subscription.id,
       subscriptionStatus: subscription.status,
-      plan: subscription.items?.data[0]?.plan?.nickname || 'Unknown Plan',
-      currentPeriodEnd: subscription.current_period_end 
+      currentPeriodEnd: subscription.current_period_end
         ? new Date(subscription.current_period_end * 1000).toISOString()
         : null,
       updatedAt: new Date().toISOString(),
       verified: ['active', 'trialing'].includes(subscription.status)
     };
 
+    // Build safe update expression (alias plan keyword)
+    const updateExpressionParts = Object.keys(subscriptionData).map(k => `#${k} = :${k}`);
+    updateExpressionParts.push('#plan = :plan'); // explicitly handle plan
+
     await dynamo.send(new UpdateCommand({
       TableName: 'Users',
       Key: { userId: user.userId },
-      UpdateExpression: 'SET ' + Object.keys(subscriptionData)
-        .map(k => `${k} = :${k}`)
-        .join(', '),
-      ExpressionAttributeValues: Object.fromEntries(
-        Object.entries(subscriptionData).map(([k, v]) => [`:${k}`, v])
-    )}));
+      UpdateExpression: 'SET ' + updateExpressionParts.join(', '),
+      ExpressionAttributeNames: {
+        ...Object.keys(subscriptionData).reduce((acc, k) => ({ ...acc, [`#${k}`]: k }), {}),
+        '#plan': 'plan'
+      },
+      ExpressionAttributeValues: {
+        ...Object.fromEntries(Object.entries(subscriptionData).map(([k, v]) => [`:${k}`, v])),
+        ':plan': subscription.items?.data[0]?.plan?.id || 'unknown'
+      }
+    }));
 
-    if (['canceled', 'unpaid', 'past_due'].includes(subscription.status)) {
+    // Handle subscription statuses
+    if (subscription.status === 'past_due') {
+      await sendPaymentReminderEmail(user.email, user.firstName || 'Customer');
+    }
+
+    if (subscription.status === 'unpaid' || subscription.status === 'canceled') {
       await sendDiscontinuationEmail(user.email, user.firstName || 'Customer');
     }
 
@@ -323,34 +358,6 @@ async function handleSubscriptionChange(subscription) {
   } catch (error) {
     logger.error('Failed to process subscription change', error);
     throw error;
-  }
-}
-
-
-// Optional notification function
-async function sendSubscriptionEndNotification(userId) {
-  if (process.env.SEND_SUBSCRIPTION_EMAILS !== 'true') return;
-  
-  try {
-    const { Item: user } = await dynamo.send(new GetCommand({
-      TableName: 'Users',
-      Key: { userId }
-    }));
-    
-    if (user?.email) {
-      await transporter.sendMail({
-        from: `"SureTalk Support" <${process.env.EMAIL_USER}>`,
-        to: user.email,
-        subject: 'Your Subscription Has Ended',
-        html: `<h2>Subscription Update</h2>
-          <p>Your SureTalk subscription has ended.</p>
-          <a href="${process.env.FRONTEND_URL}/resubscribe" style="...">
-            Renew Your Subscription
-          </a>`
-      });
-    }
-  } catch (error) {
-    logger.error('Failed to send subscription end notification', { userId, error });
   }
 }
 
